@@ -1,0 +1,1793 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>22 Seconds — handmade craft kits from Singapore</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Homemade+Apple&family=Mrs+Saint+Delafield&family=Outfit:wght@300;400;500;600&family=Sacramento&family=Special+Elite&display=swap" rel="stylesheet">
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+
+<!-- image-slot.js inlined -->
+<script>
+/**
+ * <image-slot> — user-fillable image placeholder.
+ */
+
+(() => {
+  const STATE_FILE = '.image-slots.state.json';
+  const MAX_DIM = 1200;
+  const ACCEPT = ['image/png', 'image/jpeg', 'image/webp', 'image/avif'];
+
+  const subs = new Set();
+  let slots = {};
+  const tombstones = new Set();
+  let loaded = false;
+  let loadP = null;
+
+  function load() {
+    if (loadP) return loadP;
+    loadP = fetch(STATE_FILE)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (j && typeof j === 'object') {
+          const merged = Object.assign({}, j, slots);
+          for (const k in slots) {
+            if (merged[k] && !merged[k].u && j[k]) {
+              merged[k].u = typeof j[k] === 'string' ? j[k] : j[k].u;
+            }
+          }
+          for (const id of tombstones) delete merged[id];
+          slots = merged;
+        }
+        tombstones.clear();
+      })
+      .catch(() => {})
+      .then(() => { loaded = true; subs.forEach((fn) => fn()); });
+    return loadP;
+  }
+
+  let saving = false;
+  let saveDirty = false;
+  function save() {
+    if (saving) { saveDirty = true; return; }
+    const w = window.omelette && window.omelette.writeFile;
+    if (!w) return;
+    saving = true;
+    Promise.resolve(w(STATE_FILE, JSON.stringify(slots)))
+      .catch(() => {})
+      .then(() => { saving = false; if (saveDirty) { saveDirty = false; save(); } });
+  }
+
+  const S_MAX = 5;
+  const clampS = (s) => Math.max(1, Math.min(S_MAX, s));
+
+  function getSlot(id) {
+    const v = slots[id];
+    if (!v) return null;
+    return typeof v === 'string' ? { u: v, s: 1, x: 0, y: 0 } : v;
+  }
+
+  function setSlot(id, val) {
+    if (!id) return;
+    if (val) { slots[id] = val; tombstones.delete(id); }
+    else { delete slots[id]; if (!loaded) tombstones.add(id); }
+    subs.forEach((fn) => fn());
+    if (loaded) save(); else load().then(save);
+  }
+
+  async function toDataUrl(file, targetW) {
+    const bitmap = await createImageBitmap(file);
+    try {
+      const cap = Math.min(MAX_DIM, Math.max(1, Math.round(targetW * 2)) || MAX_DIM);
+      const scale = Math.min(1, cap / Math.max(bitmap.width, bitmap.height));
+      const w = Math.max(1, Math.round(bitmap.width * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+      return canvas.toDataURL('image/webp', 0.85);
+    } finally {
+      bitmap.close && bitmap.close();
+    }
+  }
+
+  const stylesheet =
+    ':host{display:inline-block;position:relative;vertical-align:top;' +
+    '  font:13px/1.3 system-ui,-apple-system,sans-serif;color:rgba(0,0,0,.55);width:240px;height:160px}' +
+    '.frame{position:absolute;inset:0;overflow:hidden;background:rgba(0,0,0,.04)}' +
+    '.frame img{position:absolute;max-width:none;transform:translate(-50%,-50%);' +
+    '  -webkit-user-drag:none;user-select:none;touch-action:none}' +
+    '.spill{position:absolute;transform:translate(-50%,-50%);display:none;z-index:1;' +
+    '  cursor:grab;touch-action:none}' +
+    ':host([data-panning]) .spill{cursor:grabbing}' +
+    '.spill .ghost{position:absolute;inset:0;width:100%;height:100%;opacity:.35;' +
+    '  pointer-events:none;-webkit-user-drag:none;user-select:none;' +
+    '  box-shadow:0 0 0 1px rgba(0,0,0,.2),0 12px 32px rgba(0,0,0,.2)}' +
+    '.spill .handle{position:absolute;width:12px;height:12px;border-radius:50%;' +
+    '  background:#fff;box-shadow:0 0 0 1.5px #c96442,0 1px 3px rgba(0,0,0,.3);' +
+    '  transform:translate(-50%,-50%)}' +
+    '.spill .handle[data-c=nw]{left:0;top:0;cursor:nwse-resize}' +
+    '.spill .handle[data-c=ne]{left:100%;top:0;cursor:nesw-resize}' +
+    '.spill .handle[data-c=sw]{left:0;top:100%;cursor:nesw-resize}' +
+    '.spill .handle[data-c=se]{left:100%;top:100%;cursor:nwse-resize}' +
+    ':host([data-reframe]){z-index:10}' +
+    ':host([data-reframe]) .spill{display:block}' +
+    ':host([data-reframe]) .frame{box-shadow:0 0 0 2px #c96442}' +
+    '.empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;' +
+    '  justify-content:center;gap:6px;text-align:center;padding:12px;box-sizing:border-box;' +
+    '  cursor:pointer;user-select:none}' +
+    '.empty svg{opacity:.45}' +
+    '.empty .cap{max-width:90%;font-weight:500;letter-spacing:.01em}' +
+    '.empty .sub{font-size:11px}' +
+    '.empty .sub u{text-underline-offset:2px;text-decoration-color:rgba(0,0,0,.25)}' +
+    '.empty:hover .sub u{color:rgba(0,0,0,.75);text-decoration-color:currentColor}' +
+    ':host([data-over]) .frame{outline:2px solid #c96442;outline-offset:-2px;' +
+    '  background:rgba(201,100,66,.10)}' +
+    '.ring{position:absolute;inset:0;pointer-events:none;border:1.5px dashed rgba(0,0,0,.25);' +
+    '  transition:border-color .12s}' +
+    ':host([data-over]) .ring{border-color:#c96442}' +
+    ':host([data-filled]) .ring{display:none}' +
+    '.ctl{position:absolute;top:100%;left:50%;transform:translateX(-50%);padding-top:8px;' +
+    '  display:flex;gap:6px;opacity:0;pointer-events:none;transition:opacity .12s;z-index:2;' +
+    '  white-space:nowrap}' +
+    ':host([data-filled][data-editable]:hover) .ctl,:host([data-reframe]) .ctl' +
+    '  {opacity:1;pointer-events:auto}' +
+    '.ctl button{appearance:none;border:0;border-radius:6px;padding:5px 10px;cursor:pointer;' +
+    '  background:rgba(0,0,0,.65);color:#fff;font:11px/1 system-ui,-apple-system,sans-serif;' +
+    '  backdrop-filter:blur(6px)}' +
+    '.ctl button:hover{background:rgba(0,0,0,.8)}' +
+    '.err{position:absolute;left:8px;bottom:8px;right:8px;color:#b3261e;font-size:11px;' +
+    '  background:rgba(255,255,255,.85);padding:4px 6px;border-radius:5px;pointer-events:none}';
+
+  const icon =
+    '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
+    '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>' +
+    '<path d="m21 15-5-5L5 21"/></svg>';
+
+  class ImageSlot extends HTMLElement {
+    static get observedAttributes() {
+      return ['shape', 'radius', 'mask', 'fit', 'position', 'placeholder', 'src', 'id'];
+    }
+
+    constructor() {
+      super();
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML =
+        '<style>' + stylesheet + '</style>' +
+        '<div class="frame" part="frame">' +
+        '  <img part="image" alt="" draggable="false" style="display:none">' +
+        '  <div class="empty" part="empty">' + icon +
+        '    <div class="cap"></div>' +
+        '    <div class="sub">or <u>browse files</u></div></div>' +
+        '  <div class="ring" part="ring"></div>' +
+        '</div>' +
+        '<div class="spill">' +
+        '  <img class="ghost" alt="" draggable="false">' +
+        '  <div class="handle" data-c="nw"></div><div class="handle" data-c="ne"></div>' +
+        '  <div class="handle" data-c="sw"></div><div class="handle" data-c="se"></div>' +
+        '</div>' +
+        '<div class="ctl"><button data-act="replace" title="Replace image">Replace</button>' +
+        '  <button data-act="clear" title="Remove image">Remove</button></div>' +
+        '<input type="file" accept="' + ACCEPT.join(',') + '" hidden>';
+      this._frame = root.querySelector('.frame');
+      this._ring = root.querySelector('.ring');
+      this._img = root.querySelector('.frame img');
+      this._empty = root.querySelector('.empty');
+      this._cap = root.querySelector('.cap');
+      this._sub = root.querySelector('.sub');
+      this._spill = root.querySelector('.spill');
+      this._ghost = root.querySelector('.ghost');
+      this._err = null;
+      this._input = root.querySelector('input');
+      this._depth = 0;
+      this._gen = 0;
+      this._view = { s: 1, x: 0, y: 0 };
+      this._subFn = () => this._render();
+      this._empty.addEventListener('click', () => this._input.click());
+      root.addEventListener('click', (e) => {
+        const act = e.target && e.target.getAttribute && e.target.getAttribute('data-act');
+        if (act === 'replace') { this._exitReframe(true); this._input.click(); }
+        if (act === 'clear') {
+          this._exitReframe(false);
+          this._gen++;
+          this._local = null;
+          if (this.id) setSlot(this.id, null); else this._render();
+        }
+      });
+      this._input.addEventListener('change', () => {
+        const f = this._input.files && this._input.files[0];
+        if (f) this._ingest(f);
+        this._input.value = '';
+      });
+      this._img.addEventListener('load', () => this._applyView());
+      this.addEventListener('dblclick', (e) => {
+        if (!this.hasAttribute('data-editable') || !this._reframes()) return;
+        e.preventDefault();
+        if (this.hasAttribute('data-reframe')) this._exitReframe(true);
+        else this._enterReframe();
+      });
+      this._spill.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || !this.hasAttribute('data-reframe')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this._spill.setPointerCapture(e.pointerId);
+        const rect = this.getBoundingClientRect();
+        const fw = rect.width || 1, fh = rect.height || 1;
+        const corner = e.target.getAttribute && e.target.getAttribute('data-c');
+        let move;
+        if (corner) {
+          const iw = this._img.naturalWidth || 1, ih = this._img.naturalHeight || 1;
+          const base = Math.max(fw / iw, fh / ih);
+          const sx = corner.includes('e') ? 1 : -1;
+          const sy = corner.includes('s') ? 1 : -1;
+          const s0 = this._view.s;
+          const w0 = iw * base * s0, h0 = ih * base * s0;
+          const cx0 = (50 + this._view.x) / 100 * fw;
+          const cy0 = (50 + this._view.y) / 100 * fh;
+          const ox = cx0 - sx * w0 / 2, oy = cy0 - sy * h0 / 2;
+          const diag0 = Math.hypot(w0, h0);
+          const ux = sx * w0 / diag0, uy = sy * h0 / diag0;
+          move = (ev) => {
+            const proj = (ev.clientX - rect.left - ox) * ux +
+                         (ev.clientY - rect.top - oy) * uy;
+            const s = clampS(s0 * proj / diag0);
+            const d = diag0 * s / s0;
+            this._view.s = s;
+            this._view.x = (ox + ux * d / 2) / fw * 100 - 50;
+            this._view.y = (oy + uy * d / 2) / fh * 100 - 50;
+            this._clampView();
+            this._applyView();
+          };
+        } else {
+          this.setAttribute('data-panning', '');
+          const start = { px: e.clientX, py: e.clientY, x: this._view.x, y: this._view.y };
+          move = (ev) => {
+            this._view.x = start.x + (ev.clientX - start.px) / fw * 100;
+            this._view.y = start.y + (ev.clientY - start.py) / fh * 100;
+            this._clampView();
+            this._applyView();
+          };
+        }
+        const up = () => {
+          try { this._spill.releasePointerCapture(e.pointerId); } catch {}
+          this._spill.removeEventListener('pointermove', move);
+          this._spill.removeEventListener('pointerup', up);
+          this._spill.removeEventListener('pointercancel', up);
+          this.removeAttribute('data-panning');
+          this._dragUp = null;
+        };
+        this._dragUp = up;
+        this._spill.addEventListener('pointermove', move);
+        this._spill.addEventListener('pointerup', up);
+        this._spill.addEventListener('pointercancel', up);
+      });
+      this.addEventListener('wheel', (e) => {
+        if (!this.hasAttribute('data-reframe')) return;
+        e.preventDefault();
+        const r = this.getBoundingClientRect();
+        const cx = (e.clientX - r.left) / r.width * 100 - 50;
+        const cy = (e.clientY - r.top) / r.height * 100 - 50;
+        const prev = this._view.s;
+        const next = clampS(prev * Math.pow(1.0015, -e.deltaY));
+        if (next === prev) return;
+        const k = next / prev;
+        this._view.s = next;
+        this._view.x = cx * (1 - k) + this._view.x * k;
+        this._view.y = cy * (1 - k) + this._view.y * k;
+        this._clampView();
+        this._applyView();
+      }, { passive: false });
+    }
+
+    connectedCallback() {
+      this.addEventListener('dragenter', this);
+      this.addEventListener('dragover', this);
+      this.addEventListener('dragleave', this);
+      this.addEventListener('drop', this);
+      subs.add(this._subFn);
+      this._ro = new ResizeObserver(() => this._render());
+      this._ro.observe(this);
+      load();
+      this._render();
+    }
+
+    disconnectedCallback() {
+      subs.delete(this._subFn);
+      this.removeEventListener('dragenter', this);
+      this.removeEventListener('dragover', this);
+      this.removeEventListener('dragleave', this);
+      this.removeEventListener('drop', this);
+      if (this._ro) { this._ro.disconnect(); this._ro = null; }
+      this._exitReframe(false);
+    }
+
+    _enterReframe() {
+      if (this.hasAttribute('data-reframe')) return;
+      this.setAttribute('data-reframe', '');
+      this._applyView();
+      this._outside = (e) => {
+        if (e.composedPath && e.composedPath().includes(this)) return;
+        this._exitReframe(true);
+      };
+      this._esc = (e) => { if (e.key === 'Escape') this._exitReframe(true); };
+      document.addEventListener('pointerdown', this._outside, true);
+      document.addEventListener('keydown', this._esc, true);
+    }
+
+    _exitReframe(commit) {
+      if (!this.hasAttribute('data-reframe')) return;
+      if (this._dragUp) this._dragUp();
+      this.removeAttribute('data-reframe');
+      this.removeAttribute('data-panning');
+      if (this._outside) document.removeEventListener('pointerdown', this._outside, true);
+      if (this._esc) document.removeEventListener('keydown', this._esc, true);
+      this._outside = this._esc = null;
+      if (commit) this._commitView();
+    }
+
+    attributeChangedCallback() { if (this.shadowRoot) this._render(); }
+
+    handleEvent(e) {
+      if (e.type === 'dragenter' || e.type === 'dragover') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        if (e.type === 'dragenter') this._depth++;
+        this.setAttribute('data-over', '');
+      } else if (e.type === 'dragleave') {
+        if (--this._depth <= 0) { this._depth = 0; this.removeAttribute('data-over'); }
+      } else if (e.type === 'drop') {
+        e.preventDefault();
+        e.stopPropagation();
+        this._depth = 0;
+        this.removeAttribute('data-over');
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) this._ingest(f);
+      }
+    }
+
+    async _ingest(file) {
+      this._setError(null);
+      if (!file || ACCEPT.indexOf(file.type) < 0) {
+        this._setError('Drop a PNG, JPEG, WebP, or AVIF image.');
+        return;
+      }
+      const gen = ++this._gen;
+      try {
+        const w = this.clientWidth || this.offsetWidth || MAX_DIM;
+        const url = await toDataUrl(file, w);
+        if (gen !== this._gen) return;
+        this._exitReframe(false);
+        const val = { u: url, s: 1, x: 0, y: 0 };
+        setSlot(this.id || '', val);
+        if (!this.id) { this._local = val; this._render(); }
+      } catch (err) {
+        if (gen !== this._gen) return;
+        this._setError('Could not read that image.');
+      }
+    }
+
+    _setError(msg) {
+      if (this._err) { this._err.remove(); this._err = null; }
+      if (!msg) return;
+      const d = document.createElement('div');
+      d.className = 'err'; d.textContent = msg;
+      this.shadowRoot.appendChild(d);
+      this._err = d;
+      setTimeout(() => { if (this._err === d) { d.remove(); this._err = null; } }, 3000);
+    }
+
+    _reframes() {
+      return this.hasAttribute('data-filled') &&
+        (this.getAttribute('fit') || 'cover') === 'cover';
+    }
+
+    _geom() {
+      const iw = this._img.naturalWidth, ih = this._img.naturalHeight;
+      const fw = this.clientWidth, fh = this.clientHeight;
+      if (!iw || !ih || !fw || !fh) return null;
+      return { iw, ih, fw, fh, base: Math.max(fw / iw, fh / ih) };
+    }
+
+    _clampView() {
+      const g = this._geom();
+      if (!g) return;
+      const mx = Math.max(0, (g.iw * g.base * this._view.s / g.fw - 1) * 50);
+      const my = Math.max(0, (g.ih * g.base * this._view.s / g.fh - 1) * 50);
+      this._view.x = Math.max(-mx, Math.min(mx, this._view.x));
+      this._view.y = Math.max(-my, Math.min(my, this._view.y));
+    }
+
+    _applyView() {
+      const g = this._geom();
+      const fit = this.getAttribute('fit') || 'cover';
+      if (fit !== 'cover' || !g) {
+        this._img.style.width = '100%';
+        this._img.style.height = '100%';
+        this._img.style.left = '50%';
+        this._img.style.top = '50%';
+        this._img.style.objectFit = fit;
+        this._img.style.objectPosition = this.getAttribute('position') || '50% 50%';
+        return;
+      }
+      const k = g.base * this._view.s;
+      const w = (g.iw * k / g.fw * 100) + '%';
+      const h = (g.ih * k / g.fh * 100) + '%';
+      const l = (50 + this._view.x) + '%';
+      const t = (50 + this._view.y) + '%';
+      this._img.style.width = w; this._img.style.height = h;
+      this._img.style.left = l; this._img.style.top = t;
+      this._img.style.objectFit = '';
+      this._spill.style.width = w; this._spill.style.height = h;
+      this._spill.style.left = l; this._spill.style.top = t;
+    }
+
+    _commitView() {
+      const v = { s: this._view.s, x: this._view.x, y: this._view.y };
+      if (this._userUrl) v.u = this._userUrl;
+      if (this.id) setSlot(this.id, v);
+      else { this._local = v; }
+    }
+
+    _render() {
+      const mask = this.getAttribute('mask');
+      const shape = (this.getAttribute('shape') || 'rounded').toLowerCase();
+      let radius = '';
+      if (shape === 'circle') radius = '50%';
+      else if (shape === 'pill') radius = '9999px';
+      else if (shape === 'rounded') {
+        const n = parseFloat(this.getAttribute('radius'));
+        radius = (Number.isFinite(n) ? n : 12) + 'px';
+      }
+      this._frame.style.borderRadius = mask ? '' : radius;
+      this._frame.style.clipPath = mask || '';
+      this._ring.style.borderRadius = mask ? '' : radius;
+      this._ring.style.display = mask ? 'none' : '';
+
+      const editable = !!(window.omelette && window.omelette.writeFile);
+      this.toggleAttribute('data-editable', editable);
+      this._sub.style.display = editable ? '' : 'none';
+
+      let stored = this.id ? getSlot(this.id) : this._local;
+      if (stored && stored.u && !/^data:image\//i.test(stored.u)) stored = null;
+      const srcAttr = this.getAttribute('src') || '';
+      this._userUrl = (stored && stored.u) || null;
+      const url = this._userUrl || srcAttr;
+      if (!this.hasAttribute('data-reframe')) {
+        this._view = {
+          s: stored && Number.isFinite(stored.s) ? clampS(stored.s) : 1,
+          x: stored && Number.isFinite(stored.x) ? stored.x : 0,
+          y: stored && Number.isFinite(stored.y) ? stored.y : 0,
+        };
+      }
+      this._cap.textContent = this.getAttribute('placeholder') || 'Drop an image';
+      if (url) {
+        if (this._img.getAttribute('src') !== url) {
+          this._img.src = url;
+          this._ghost.src = url;
+        }
+        this._img.style.display = 'block';
+        this._empty.style.display = 'none';
+        this.setAttribute('data-filled', '');
+        this._clampView();
+        this._applyView();
+      } else {
+        this._img.style.display = 'none';
+        this._img.removeAttribute('src');
+        this._ghost.removeAttribute('src');
+        this._empty.style.display = 'flex';
+        this.removeAttribute('data-filled');
+      }
+    }
+  }
+
+  if (!customElements.get('image-slot')) {
+    customElements.define('image-slot', ImageSlot);
+  }
+})();
+</script>
+
+<!-- tweaks-panel.jsx inlined -->
+<script type="text/babel" data-presets="react">
+const __TWEAKS_STYLE = `
+  .twk-panel{position:fixed;right:16px;bottom:16px;z-index:2147483646;width:280px;
+    max-height:calc(100vh - 32px);display:flex;flex-direction:column;
+    transform:scale(var(--dc-inv-zoom,1));transform-origin:bottom right;
+    background:rgba(250,249,247,.78);color:#29261b;
+    -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+    border:.5px solid rgba(255,255,255,.6);border-radius:14px;
+    box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 12px 40px rgba(0,0,0,.18);
+    font:11.5px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden}
+  .twk-hd{display:flex;align-items:center;justify-content:space-between;
+    padding:10px 8px 10px 14px;cursor:move;user-select:none}
+  .twk-hd b{font-size:12px;font-weight:600;letter-spacing:.01em}
+  .twk-x{appearance:none;border:0;background:transparent;color:rgba(41,38,27,.55);
+    width:22px;height:22px;border-radius:6px;cursor:default;font-size:13px;line-height:1}
+  .twk-x:hover{background:rgba(0,0,0,.06);color:#29261b}
+  .twk-body{padding:2px 14px 14px;display:flex;flex-direction:column;gap:10px;
+    overflow-y:auto;overflow-x:hidden;min-height:0;
+    scrollbar-width:thin;scrollbar-color:rgba(0,0,0,.15) transparent}
+  .twk-row{display:flex;flex-direction:column;gap:5px}
+  .twk-row-h{flex-direction:row;align-items:center;justify-content:space-between;gap:10px}
+  .twk-lbl{display:flex;justify-content:space-between;align-items:baseline;
+    color:rgba(41,38,27,.72)}
+  .twk-lbl>span:first-child{font-weight:500}
+  .twk-val{color:rgba(41,38,27,.5);font-variant-numeric:tabular-nums}
+  .twk-sect{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:rgba(41,38,27,.45);padding:10px 0 0}
+  .twk-sect:first-child{padding-top:0}
+  .twk-field{appearance:none;box-sizing:border-box;width:100%;min-width:0;height:26px;padding:0 8px;
+    border:.5px solid rgba(0,0,0,.1);border-radius:7px;
+    background:rgba(255,255,255,.6);color:inherit;font:inherit;outline:none}
+  .twk-field:focus{border-color:rgba(0,0,0,.25);background:rgba(255,255,255,.85)}
+  select.twk-field{padding-right:22px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='rgba(0,0,0,.5)' d='M0 0h10L5 6z'/></svg>");
+    background-repeat:no-repeat;background-position:right 8px center}
+  .twk-seg{position:relative;display:flex;padding:2px;border-radius:8px;
+    background:rgba(0,0,0,.06);user-select:none}
+  .twk-seg-thumb{position:absolute;top:2px;bottom:2px;border-radius:6px;
+    background:rgba(255,255,255,.9);box-shadow:0 1px 2px rgba(0,0,0,.12);
+    transition:left .15s cubic-bezier(.3,.7,.4,1),width .15s}
+  .twk-seg.dragging .twk-seg-thumb{transition:none}
+  .twk-seg button{appearance:none;position:relative;z-index:1;flex:1;border:0;
+    background:transparent;color:inherit;font:inherit;font-weight:500;min-height:22px;
+    border-radius:6px;cursor:default;padding:4px 6px;line-height:1.2;overflow-wrap:anywhere}
+  .twk-toggle{position:relative;width:32px;height:18px;border:0;border-radius:999px;
+    background:rgba(0,0,0,.15);transition:background .15s;cursor:default;padding:0}
+  .twk-toggle[data-on="1"]{background:#34c759}
+  .twk-toggle i{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}
+  .twk-toggle[data-on="1"] i{transform:translateX(14px)}
+`;
+
+function useTweaks(defaults) {
+  const [values, setValues] = React.useState(defaults);
+  const setTweak = React.useCallback((keyOrEdits, val) => {
+    const edits = typeof keyOrEdits === 'object' && keyOrEdits !== null
+      ? keyOrEdits : { [keyOrEdits]: val };
+    setValues((prev) => ({ ...prev, ...edits }));
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits }, '*');
+    window.dispatchEvent(new CustomEvent('tweakchange', { detail: edits }));
+  }, []);
+  return [values, setTweak];
+}
+
+function TweaksPanel({ title = 'Tweaks', children }) {
+  const [open, setOpen] = React.useState(false);
+  const dragRef = React.useRef(null);
+  const offsetRef = React.useRef({ x: 16, y: 16 });
+  const PAD = 16;
+
+  const clampToViewport = React.useCallback(() => {
+    const panel = dragRef.current;
+    if (!panel) return;
+    const w = panel.offsetWidth, h = panel.offsetHeight;
+    const maxRight = Math.max(PAD, window.innerWidth - w - PAD);
+    const maxBottom = Math.max(PAD, window.innerHeight - h - PAD);
+    offsetRef.current = {
+      x: Math.min(maxRight, Math.max(PAD, offsetRef.current.x)),
+      y: Math.min(maxBottom, Math.max(PAD, offsetRef.current.y)),
+    };
+    panel.style.right = offsetRef.current.x + 'px';
+    panel.style.bottom = offsetRef.current.y + 'px';
+  }, []);
+
+  React.useEffect(() => {
+    const onMsg = (e) => {
+      const t = e?.data?.type;
+      if (t === '__activate_edit_mode') setOpen(true);
+      else if (t === '__deactivate_edit_mode') setOpen(false);
+    };
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  const dismiss = () => {
+    setOpen(false);
+    window.parent.postMessage({ type: '__edit_mode_dismissed' }, '*');
+  };
+
+  const onDragStart = (e) => {
+    const panel = dragRef.current;
+    if (!panel) return;
+    const r = panel.getBoundingClientRect();
+    const sx = e.clientX, sy = e.clientY;
+    const startRight = window.innerWidth - r.right;
+    const startBottom = window.innerHeight - r.bottom;
+    const move = (ev) => {
+      offsetRef.current = {
+        x: startRight - (ev.clientX - sx),
+        y: startBottom - (ev.clientY - sy),
+      };
+      clampToViewport();
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  if (!open) return null;
+  return (
+    <>
+      <style>{__TWEAKS_STYLE}</style>
+      <div ref={dragRef} className="twk-panel"
+           style={{ right: offsetRef.current.x, bottom: offsetRef.current.y }}>
+        <div className="twk-hd" onMouseDown={onDragStart}>
+          <b>{title}</b>
+          <button className="twk-x" aria-label="Close tweaks"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={dismiss}>✕</button>
+        </div>
+        <div className="twk-body">{children}</div>
+      </div>
+    </>
+  );
+}
+
+function TweakSection({ label, children }) {
+  return (
+    <>
+      <div className="twk-sect">{label}</div>
+      {children}
+    </>
+  );
+}
+
+function TweakRow({ label, value, children, inline = false }) {
+  return (
+    <div className={inline ? 'twk-row twk-row-h' : 'twk-row'}>
+      <div className="twk-lbl">
+        <span>{label}</span>
+        {value != null && <span className="twk-val">{value}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function TweakRadio({ label, value, options, onChange }) {
+  const trackRef = React.useRef(null);
+  const [dragging, setDragging] = React.useState(false);
+  const valueRef = React.useRef(value);
+  valueRef.current = value;
+
+  const labelLen = (o) => String(typeof o === 'object' ? o.label : o).length;
+  const maxLen = options.reduce((m, o) => Math.max(m, labelLen(o)), 0);
+  const fitsAsSegments = maxLen <= ({ 2: 16, 3: 10 }[options.length] ?? 0);
+  if (!fitsAsSegments) {
+    return <TweakSelect label={label} value={value} options={options} onChange={onChange} />;
+  }
+  const opts = options.map((o) => (typeof o === 'object' ? o : { value: o, label: o }));
+  const idx = Math.max(0, opts.findIndex((o) => o.value === value));
+  const n = opts.length;
+
+  const segAt = (clientX) => {
+    const r = trackRef.current.getBoundingClientRect();
+    const inner = r.width - 4;
+    const i = Math.floor(((clientX - r.left - 2) / inner) * n);
+    return opts[Math.max(0, Math.min(n - 1, i))].value;
+  };
+
+  const onPointerDown = (e) => {
+    setDragging(true);
+    const v0 = segAt(e.clientX);
+    if (v0 !== valueRef.current) onChange(v0);
+    const move = (ev) => {
+      if (!trackRef.current) return;
+      const v = segAt(ev.clientX);
+      if (v !== valueRef.current) onChange(v);
+    };
+    const up = () => {
+      setDragging(false);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  return (
+    <TweakRow label={label}>
+      <div ref={trackRef} role="radiogroup" onPointerDown={onPointerDown}
+           className={dragging ? 'twk-seg dragging' : 'twk-seg'}>
+        <div className="twk-seg-thumb"
+             style={{ left: `calc(2px + ${idx} * (100% - 4px) / ${n})`,
+                      width: `calc((100% - 4px) / ${n})` }} />
+        {opts.map((o) => (
+          <button key={o.value} type="button" role="radio" aria-checked={o.value === value}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </TweakRow>
+  );
+}
+
+function TweakSelect({ label, value, options, onChange }) {
+  return (
+    <TweakRow label={label}>
+      <select className="twk-field" value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map((o) => {
+          const v = typeof o === 'object' ? o.value : o;
+          const l = typeof o === 'object' ? o.label : o;
+          return <option key={v} value={v}>{l}</option>;
+        })}
+      </select>
+    </TweakRow>
+  );
+}
+
+Object.assign(window, {
+  useTweaks, TweaksPanel, TweakSection, TweakRow, TweakRadio, TweakSelect,
+});
+</script>
+
+<style>
+  @font-face {
+    font-family: 'Aston Script';
+    src: url('font/Aston Script.ttf') format('truetype');
+    font-weight: normal; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Valetia Script';
+    src: url('font/Valetia Script.ttf') format('truetype');
+    font-weight: normal; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Sloop Script';
+    src: url('font/Sloop-ScriptThree.ttf') format('truetype');
+    font-weight: normal; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Lorestta';
+    src: url('font/lorestta/Lorestta.woff2') format('woff2'),
+         url('font/lorestta/Lorestta.ttf') format('truetype');
+    font-weight: normal; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Stars Regular';
+    src: url('font/Stars-Regular.ttf') format('truetype');
+    font-weight: normal; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Oceanside Typewriter';
+    src: url('font/oceanside_typewriter/Oceanside Typewriter.ttf') format('truetype');
+    font-weight: normal; font-style: normal;
+  }
+  @font-face {
+    font-family: 'ZT Bros Oskon';
+    src: url('font/zt_bros_oskon_90s/ZTBrosOskon90s-Regular.otf') format('opentype');
+    font-weight: 400; font-style: normal;
+  }
+  @font-face {
+    font-family: 'ZT Bros Oskon';
+    src: url('font/zt_bros_oskon_90s/ZTBrosOskon90s-Light.otf') format('opentype');
+    font-weight: 300; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Berky';
+    src: url('font/BERKY.ttf') format('truetype');
+    font-weight: normal; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Alte Haas Grotesk';
+    src: url('font/alte_haas_grotesk/AlteHaasGroteskRegular.ttf') format('truetype');
+    font-weight: 400; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Alte Haas Grotesk';
+    src: url('font/alte_haas_grotesk/AlteHaasGroteskBold.ttf') format('truetype');
+    font-weight: 700; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Editorial Today';
+    src: url('font/EditorialToday-Regular.ttf') format('truetype');
+    font-weight: 400; font-style: normal;
+  }
+  @font-face {
+    font-family: 'Fast In My Car';
+    src: url('font/Fast In My Car.ttf') format('truetype');
+    font-weight: normal; font-style: normal;
+  }
+
+  :root {
+    /* Font system — controllable via the Tweaks panel. */
+    --font-hand:    'Stars Regular', cursive;                  /* wordmark only */
+    --font-display: 'Outfit', ui-sans-serif, system-ui, sans-serif; /* section titles */
+    --font-body:    'Outfit', ui-sans-serif, system-ui, sans-serif; /* body copy */
+    --font-mono:    'Special Elite', ui-monospace, monospace;  /* typewriter captions */
+    --mono-stroke:  0.4px;                                     /* faux-bold for Special Elite */
+    --display-italic: normal;                                   /* normal for sans pairs */
+
+    --butter:     #fdf6dc;
+    --kraft:      #c4a882;
+    --kraft-dark: #8b6f47;
+    --kraft-light:#e8d5b7;
+    --paper:      #faf7f0;
+    --ink:        #2c2416;
+    --ink-light:  #6b5744;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  .act1-sublabel, .leader-text, .leader-arrow, .act2-center-label .sm,
+  .stamp-mark, .cta-stamp-btn, .foot-grid .brand p:last-child,
+  .foot-grid .links, .notecard .item-desc {
+    -webkit-text-stroke: var(--mono-stroke) currentColor;
+  }
+  html, body { width: 100%; }
+  html { scroll-behavior: smooth; overflow-x: hidden; }
+  body {
+    background: var(--butter);
+    color: var(--ink);
+    font-family: var(--font-body);
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    pointer-events: none; z-index: 9999;
+    opacity: 0.32; mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E");
+  }
+
+  /* ─────────── ACT 1 — Landing ─────────── */
+  .act1 {
+    height: 100vh;
+    min-height: 640px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--butter);
+    position: relative;
+    overflow: hidden;
+    padding: 0 24px;
+  }
+  /* Ambient star photo overlay — very subtle */
+  .act1-stars-bg {
+    position: absolute; inset: 0;
+    background-image: url('assets/star-confetti-ref.png');
+    background-size: cover;
+    background-position: center;
+    opacity: 0.35;
+    mix-blend-mode: multiply;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .act1 > * { position: relative; z-index: 1; }
+
+  .cross-stitch-center {
+    width: clamp(200px, 26vw, 340px);
+    margin-bottom: 6px;
+    pointer-events: none;
+    opacity: 0;
+    animation: fadeInSoft 1.6s ease 0.1s forwards;
+  }
+  .cross-stitch-center img { width: 100%; display: block; }
+  .act1-sublabel {
+    font-family: 'Alte Haas Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--ink);
+    opacity: 0;
+    animation: fadeInSoft 1.2s ease 1.6s forwards;
+    margin-top: 8px;
+    margin-bottom: 0;
+  }
+  @keyframes fadeInSoft { to { opacity: 0.7; } }
+
+  .act1-logo {
+    font-family: var(--font-hand);
+    font-weight: 700;
+    font-size: clamp(52px, 9vw, 110px);
+    color: var(--ink);
+    letter-spacing: 0.01em;
+    line-height: 1.3;
+    text-align: center;
+    padding: 0.05em 0.1em 0.25em;
+    opacity: 0;
+    animation: logoIn 1.4s cubic-bezier(.22,.61,.36,1) 0.3s forwards;
+    -webkit-text-stroke: 0.5px var(--ink);
+  }
+  @keyframes logoIn {
+    from { opacity: 0; transform: translateY(10px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0)    scale(1); }
+  }
+
+  .act1-leader {
+    margin-top: 44px;
+    opacity: 0;
+    animation: leaderIn 1s ease 2.4s forwards;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  @keyframes leaderIn { to { opacity: 1; } }
+  .leader-text {
+    font-family: 'Alte Haas Grotesk', sans-serif;
+    font-weight: 400;
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--ink-light);
+    opacity: 0.7;
+  }
+  .leader-arrow {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    color: var(--ink-light);
+    line-height: 1;
+    letter-spacing: 0.3em;
+    animation: bob 2.2s ease-in-out infinite;
+  }
+  @keyframes bob {
+    0%,100% { transform: translateY(0); }
+    50%     { transform: translateY(6px); }
+  }
+  .act1-leader.hidden { opacity: 0 !important; animation: none; transition: opacity 0.4s ease; }
+
+  /* Confetti stars */
+  .confetti-stars { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+  .confetti-star {
+    position: absolute;
+    pointer-events: none;
+    opacity: 0;
+  }
+  @keyframes starIn  { to { opacity: 1; } }
+  @keyframes starBob { 0%,100% { translate: 0 0; } 50% { translate: 0 -6px; } }
+
+  /* ─────────── ACT 2 — Parcel opens ─────────── */
+  .act2-outer {
+    height: 150vh;
+    position: relative;
+  }
+  .act2-sticky {
+    position: sticky; top: 0;
+    height: 100vh;
+    overflow: hidden;
+  }
+  /* June's Box — plaid linen background */
+  .monet-garden {
+    position: absolute; inset: 0;
+    background-image: url('assets/plaid-bg.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .monet-dabs { display: none; }
+
+  .act2-center-label {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 1; text-align: center;
+    padding: 0 24px;
+  }
+  .act2-center-label .sm {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.34em;
+    text-transform: uppercase;
+    color: var(--ink-light);
+    margin-bottom: 14px;
+    opacity: 0.85;
+  }
+  .act2-center-label .lg {
+    font-family: var(--font-display);
+    font-style: var(--display-italic);
+    font-weight: 500;
+    font-size: clamp(44px, 7.5vw, 88px);
+    color: var(--ink);
+    line-height: 1.05;
+    letter-spacing: -0.005em;
+  }
+
+  .kraft-panel {
+    position: absolute;
+    background-color: var(--kraft);
+    background-image:
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.42'/%3E%3C/svg%3E"),
+      radial-gradient(ellipse at 30% 20%, rgba(255,240,210,0.18), transparent 60%),
+      radial-gradient(ellipse at 70% 80%, rgba(60,40,20,0.12), transparent 60%);
+    background-blend-mode: multiply, normal, normal;
+    z-index: 5;
+  }
+  .kraft-top    { top: 0; left: 0; right: 0; height: 55%; transform: translateY(0%);  box-shadow: inset 0 -12px 24px rgba(44,36,22,0.18); }
+  .kraft-bottom { bottom: 0; left: 0; right: 0; height: 55%; transform: translateY(0%); box-shadow: inset 0 12px 24px rgba(44,36,22,0.18); }
+  .kraft-left   { top: 0; left: 0; bottom: 0; width: 55%;  transform: translateX(0%); box-shadow: inset -12px 0 24px rgba(44,36,22,0.18); }
+  .kraft-right  { top: 0; right: 0; bottom: 0; width: 55%; transform: translateX(0%); box-shadow: inset 12px 0 24px rgba(44,36,22,0.18); }
+  @media (max-width: 768px) {
+    .kraft-top, .kraft-bottom { height: 60%; }
+    .kraft-left, .kraft-right { width: 60%; }
+  }
+
+  .stamp-mark {
+    position: absolute;
+    z-index: 7;
+    color: #6b3a1f;
+    font-family: var(--font-mono);
+    text-align: center;
+    border: 2px solid currentColor;
+    padding: 6px 14px 5px;
+    transform: rotate(-8deg);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-size: 11px;
+    line-height: 1.4;
+    border-radius: 2px;
+    opacity: 0.78;
+  }
+  .stamp-mark.tl { top: 8%; left: 8%; }
+  .stamp-mark.br { bottom: 9%; right: 9%; transform: rotate(6deg); font-size: 10px; }
+
+  /* ─────────── ACT 3 — June's Box ─────────── */
+  .act3 {
+    position: relative;
+    min-height: 100vh;
+    padding: 72px 24px 80px;
+    overflow: hidden;
+  }
+  .act3 .monet-garden,
+  .act3 .monet-dabs { z-index: 0; }
+  .act3-inner {
+    position: relative;
+    z-index: 1;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+  .act3-header { text-align: center; margin-bottom: 28px; }
+  .act3-title {
+    font-family: 'Berky', cursive;
+    font-style: normal;
+    font-weight: 400;
+    font-size: clamp(48px, 7vw, 80px);
+    color: #ffffff;
+    -webkit-text-stroke: 2px var(--ink);
+    line-height: 1.15;
+    letter-spacing: 0.01em;
+  }
+  .act3-wavy { display: block; margin: 6px auto 6px; }
+  .act3-subtitle {
+    font-family: 'Berky', cursive;
+    font-size: clamp(28px, 4.5vw, 52px);
+    color: #ffffff;
+    -webkit-text-stroke: 1.5px var(--ink);
+    letter-spacing: 0.01em;
+    text-transform: none;
+    line-height: 1.2;
+    margin-top: 4px;
+  }
+
+  /* Scrapbook layout */
+  .act3-stage {
+    position: relative;
+    min-height: 580px;
+    margin-top: 12px;
+  }
+
+  /* Notecard */
+  .notecard {
+    width: min(560px, 92vw);
+    margin: 0 auto;
+    padding: 56px 60px 48px;
+    position: relative;
+    z-index: 3;
+    background: #faf5e9;
+    box-shadow: 0 2px 0 rgba(255,255,255,0.7) inset, 0 14px 32px rgba(44,36,22,0.18), 0 2px 6px rgba(44,36,22,0.08);
+    transform: rotate(-0.8deg);
+  }
+  .notecard.floating { animation: floatCard 5s ease-in-out infinite; }
+  @keyframes floatCard {
+    0%,100% { transform: rotate(-0.8deg) translateY(0); }
+    50%     { transform: rotate(-0.8deg) translateY(-6px); }
+  }
+  /* Washi tape on top of notecard */
+  .washi {
+    position: absolute;
+    top: -22px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-2deg);
+    width: 180px;
+    height: 56px;
+    background-image: url('assets/tape-2.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    filter: drop-shadow(0 3px 5px rgba(44,36,22,0.18));
+  }
+  .notecard h3 {
+    font-family: 'Alte Haas Grotesk', sans-serif;
+    font-style: normal;
+    font-weight: 700;
+    font-size: 24px;
+    color: var(--ink);
+    text-align: center;
+    margin-bottom: 22px;
+    line-height: 1;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .notecard .item-row {
+    margin-bottom: 14px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    color: var(--ink);
+    line-height: 1.75;
+  }
+  .notecard .item-row:last-child { margin-bottom: 0; }
+  .notecard .item-name {
+    display: block;
+    font-family: 'Alte Haas Grotesk', sans-serif;
+    font-style: normal;
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--ink);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    margin-bottom: 1px;
+  }
+  .notecard .item-desc { color: var(--ink-light); font-family: var(--font-body); }
+
+  /* Kit tags */
+  .kit-tag {
+    position: absolute;
+    width: 180px;
+    min-height: 200px;
+    padding: 22px 16px 18px;
+    display: flex; flex-direction: column;
+    align-items: center; text-align: center;
+    justify-content: center;
+    z-index: 2;
+    transition: transform 0.25s ease;
+    background: #faf5e9;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.65) inset, 0 8px 18px rgba(44,36,22,0.18), 0 1px 4px rgba(44,36,22,0.08);
+  }
+  .kit-tag::before { display: none; }
+  .kit-tag .tag-tape {
+    position: absolute;
+    top: -10px; left: 50%;
+    transform: translateX(-50%) rotate(-4deg);
+    width: 70px; height: 22px;
+    background-image: url('assets/tape-1.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-color: transparent !important;
+    filter: drop-shadow(0 2px 3px rgba(44,36,22,0.15));
+    z-index: 1;
+  }
+  .kit-tag.var-sage  .tag-tape { background-image: url('assets/tape-2.png'); width: 80px; transform: translateX(-50%) rotate(3deg); }
+  .kit-tag.var-sky   .tag-tape { background-image: url('assets/tape-3.png'); width: 90px; height: 18px; transform: translateX(-50%) rotate(-2deg); }
+  .kit-tag.var-cream .tag-tape { background-image: url('assets/tape-1.png'); transform: translateX(-50%) rotate(2deg); }
+  .kit-tag .tag-name {
+    font-family: 'Alte Haas Grotesk', sans-serif; font-style: normal; font-weight: 700;
+    font-size: 11px; color: var(--ink); line-height: 1.2; margin-top: 6px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .kit-tag .tag-meta { display: none; }
+  .kit-tag .tag-img {
+    width: 100px; height: 100px;
+    object-fit: contain;
+    margin-top: 10px;
+    border-radius: 2px;
+  }
+  .kit-tag .tag-imgs {
+    display: flex; gap: 2px; margin-top: 10px;
+  }
+  .kit-tag .tag-imgs img {
+    width: 54px; height: 54px;
+    object-fit: contain;
+  }
+
+  /* Tag positions — scattered around notecard, desktop only */
+  @media (min-width: 880px) {
+    .kit-tag.k0 { top:   2%; left: 2%;   transform: rotate(-3deg); }
+    .kit-tag.k1 { top:  -2%; right: 4%;  transform: rotate(2deg); }
+    .kit-tag.k2 { top:  44%; left: -1%;  transform: rotate(-2deg); }
+    .kit-tag.k3 { top:  46%; right: 0%;  transform: rotate(3deg); }
+    .kit-tag.k4 { bottom:-6%; left: 14%; transform: rotate(2deg); }
+    .kit-tag:hover { transform: translateY(-6px) rotate(0deg) scale(1.04); z-index: 4; }
+  }
+  /* Mobile / tablet: tags wrap as a row above notecard */
+  @media (max-width: 879px) {
+    .act3-stage {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 14px;
+      min-height: 0;
+    }
+    .kit-tag {
+      position: static;
+      width: 148px;
+      min-height: 180px;
+      flex: 0 0 auto;
+    }
+    .kit-tag .tag-img { width: 88px; height: 88px; }
+    .kit-tag .tag-imgs img { width: 46px; height: 46px; }
+    .notecard {
+      flex: 0 0 100%;
+      order: 99;
+      margin-top: 14px;
+    }
+    .kit-tag.k0 { transform: rotate(-2deg); }
+    .kit-tag.k1 { transform: rotate(1deg); }
+    .kit-tag.k2 { transform: rotate(-1deg); }
+    .kit-tag.k3 { transform: rotate(2deg); }
+    .kit-tag.k4 { transform: rotate(-1deg); }
+  }
+
+  @media (max-width: 480px) {
+    /* Shrink scattered stars so they don't crowd logo on small screens */
+    .confetti-star { transform-origin: center; }
+    .confetti-stars { opacity: 0.7; }
+    /* Reduce star sizes via scale */
+    .act1-logo { font-size: clamp(44px, 13vw, 80px); }
+    .act1-sublabel { font-size: 11px; letter-spacing: 0.2em; }
+  }
+
+  /* CTA */
+  .act3-cta-wrap {
+    text-align: center;
+    margin-top: 44px;
+    position: relative;
+    z-index: 3;
+  }
+  .cta-stamp-btn {
+    display: inline-block;
+    font-family: var(--font-display);
+    font-style: var(--display-italic);
+    font-weight: 500;
+    font-size: 18px;
+    padding: 13px 32px;
+    border: 1.5px solid var(--ink);
+    background: var(--paper);
+    color: var(--ink);
+    letter-spacing: 0.01em;
+    box-shadow: 4px 4px 0 var(--ink);
+    text-decoration: none;
+    transition: all 0.15s ease;
+    cursor: pointer;
+  }
+  .cta-stamp-btn:hover {
+    background: var(--ink);
+    color: var(--paper);
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0 var(--kraft-dark);
+  }
+  .cta-stamp-btn:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--ink); }
+
+  @media (max-width: 768px) {
+    .notecard { padding: 32px 26px 28px; }
+    .notecard h3 { font-size: 24px; }
+    .notecard .item-row { font-size: 13px; line-height: 1.7; }
+  }
+
+  /* ─────────── ACT 4 — Letter ─────────── */
+  .act4 {
+    min-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--paper);
+    background-image: repeating-linear-gradient(transparent, transparent 39px, rgba(196,168,130,0.25) 39px, rgba(196,168,130,0.25) 40px);
+    padding: 64px 24px;
+  }
+  .letter-content {
+    max-width: 620px; width: 100%;
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.95;
+    color: var(--ink);
+    letter-spacing: 0.005em;
+  }
+  .letter-content .hello {
+    font-family: 'Oceanside Typewriter', monospace; font-weight: normal;
+    font-size: clamp(28px, 4vw, 40px);
+    display: block;
+    margin-bottom: 22px; color: var(--ink); line-height: 1.2;
+    letter-spacing: 0.01em;
+  }
+  .letter-content p { margin-bottom: 18px; text-wrap: pretty; }
+  .letter-content .signoff {
+    font-family: 'Oceanside Typewriter', monospace; font-weight: normal;
+    font-size: clamp(24px, 3.5vw, 36px);
+    display: block; line-height: 1.6; margin-top: 10px; color: var(--ink);
+  }
+  @media (max-width: 768px) {
+    .act4 { padding: 48px 22px; }
+    .letter-content { font-size: 15px; }
+    .letter-content .hello { font-size: clamp(22px, 6vw, 32px); }
+    .letter-content .signoff { font-size: clamp(20px, 5vw, 28px); }
+  }
+
+  /* ─────────── Footer ─────────── */
+  footer.site-foot {
+    background: var(--kraft-dark);
+    color: var(--paper);
+    padding: 48px 32px 28px;
+  }
+  footer.site-foot a { color: inherit; text-decoration: none; border-bottom: 1px dotted rgba(250,247,240,0.4); }
+  footer.site-foot a:hover { border-bottom-color: var(--paper); }
+  .foot-grid {
+    max-width: 980px; margin: 0 auto;
+    display: flex; justify-content: space-between;
+    flex-wrap: wrap; gap: 28px;
+  }
+  .foot-grid .brand p:first-child { font-family: var(--font-hand); font-size: 28px; margin-bottom: 4px; line-height: 1; }
+  .foot-grid .brand p:last-child  { font-family: var(--font-mono); font-size: 13px; opacity: 0.75; }
+  .foot-grid .links { font-family: var(--font-mono); font-size: 14px; line-height: 1.95; opacity: 0.9; }
+  .foot-bottom {
+    max-width: 980px; margin: 32px auto 0;
+    padding-top: 18px;
+    border-top: 1px solid rgba(250,247,240,0.2);
+    font-family: var(--font-mono); font-size: 12px;
+    opacity: 0.6; text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useEffect, useRef } = React;
+const { gsap } = window;
+gsap.registerPlugin(window.ScrollTrigger);
+
+/* ─────────────────────────── Cross-stitch swans SVG ─────────────────────────── */
+function CrossStitchSwans() {
+  const S = 9, COLS = 48, ROWS = 34;
+  const W = COLS * S, H = ROWS * S;
+  const NAVY = '#1e3264', WATER = '#4a85b0', ROSE = '#b83a5c';
+
+  const base = [
+    [10,1],
+    [9,2],[10,2],
+    [9,3],[8,4],[8,5],[7,6],[7,7],
+    [7,8],[8,8],[9,8],[10,8],[11,8],
+    [5,9],[6,9],[7,9],[8,9],[9,9],[10,9],[11,9],
+    [4,10],[5,10],[6,10],[7,10],[8,10],[9,10],[10,10],
+    [4,11],[5,11],[6,11],[7,11],[8,11],[9,11],
+    [5,12],[6,12],[7,12],[8,12],
+    [6,13],[7,13],
+    [2,8],[3,8],[3,9],
+    [1,9],[2,9],[2,10],
+    [0,11],[1,11],[0,12],[1,12],
+  ];
+  const heart0 = [[11,2],[12,2],[11,3],[12,3],[12,4]];
+  const water0 = [
+    ...[0,2,4,6,8,10,12,14,16,18,20,22].map(c=>[c,15]),
+    ...[1,3,5,7,9,11,13,15,17,19,21,23].map(c=>[c,16]),
+  ];
+
+  const expand = pts => pts.flatMap(([c,r])=>[
+    [2*c,2*r],[2*c+1,2*r],[2*c,2*r+1],[2*c+1,2*r+1]
+  ]);
+  const leftSwan  = expand(base);
+  const rightSwan = expand(base.map(([c,r])=>[23-c,r]));
+  const heart     = expand(heart0);
+  const water     = expand(water0);
+
+  const X = (c, r, color, id) => {
+    const g=1.2, x1=c*S+g, y1=r*S+g, x2=(c+1)*S-g, y2=(r+1)*S-g;
+    return (
+      <g key={id} stroke={color} strokeWidth="1.0" strokeLinecap="round">
+        <line x1={x1} y1={y1} x2={x2} y2={y2}/>
+        <line x1={x2} y1={y1} x2={x1} y2={y2}/>
+      </g>
+    );
+  };
+
+  return (
+    <div className="cross-stitch-center">
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',display:'block'}}>
+        {Array.from({length:COLS+1},(_,i)=>(
+          <line key={`v${i}`} x1={i*S} y1={0} x2={i*S} y2={H} stroke="rgba(44,36,22,0.05)" strokeWidth="0.4"/>
+        ))}
+        {Array.from({length:ROWS+1},(_,i)=>(
+          <line key={`h${i}`} x1={0} y1={i*S} x2={W} y2={i*S} stroke="rgba(44,36,22,0.05)" strokeWidth="0.4"/>
+        ))}
+        {leftSwan.map(([c,r],i)  => X(c,r,NAVY, `l${i}`))}
+        {rightSwan.map(([c,r],i) => X(c,r,NAVY, `r${i}`))}
+        {heart.map(([c,r],i)     => X(c,r,ROSE, `h${i}`))}
+        {water.map(([c,r],i)     => X(c,r,WATER,`w${i}`))}
+      </svg>
+    </div>
+  );
+}
+
+const BG = {
+  star:   'images/background/star2-removebg-preview.png',
+  silver: 'images/background/stars-removebg-preview.png',
+  cluster:'images/background/stars3-removebg-preview.png',
+  swirl:  'images/background/swirl-removebg-preview.png',
+  clover: 'images/background/Adobe Express - file.png',
+};
+const STARS = [
+  { top:'6%',  left:'5%',  size:85,  rot:-12, d1:'0s',   d2:'1.4s', img:BG.star    },
+  { top:'5%',  left:'78%', size:70,  rot:15,  d1:'0.2s', d2:'1.6s', img:BG.silver  },
+  { top:'4%',  left:'43%', size:62,  rot:5,   d1:'0.9s', d2:'2.3s', img:BG.cluster },
+  { top:'28%', left:'2%',  size:58,  rot:8,   d1:'0.4s', d2:'1.8s', img:BG.swirl   },
+  { top:'28%', left:'84%', size:65,  rot:-8,  d1:'0.3s', d2:'1.7s', img:BG.star    },
+  { top:'50%', left:'6%',  size:76,  rot:-6,  d1:'0.5s', d2:'1.9s', img:BG.clover  },
+  { top:'50%', left:'80%', size:72,  rot:18,  d1:'0.6s', d2:'2s',   img:BG.cluster },
+  { top:'70%', left:'12%', size:90,  rot:22,  d1:'0.7s', d2:'2.1s', img:BG.silver  },
+  { top:'68%', left:'76%', size:68,  rot:-18, d1:'0.15s',d2:'1.5s', img:BG.swirl   },
+  { top:'86%', left:'42%', size:78,  rot:-4,  d1:'0.8s', d2:'2.2s', img:BG.star    },
+  { top:'88%', left:'6%',  size:55,  rot:12,  d1:'1.0s', d2:'2.4s', img:BG.cluster },
+  { top:'85%', left:'78%', size:60,  rot:-10, d1:'0.35s',d2:'1.75s',img:BG.silver  },
+];
+
+/* ─────────────────────────── Act 1 — Landing ─────────────────────────── */
+function Act1Landing() {
+  const logoRef = useRef(null);
+  const leaderRef = useRef(null);
+
+  useEffect(() => {
+    const onScroll = () => {
+      if (!leaderRef.current) return;
+      if (window.scrollY > 4) leaderRef.current.classList.add('hidden');
+      else                    leaderRef.current.classList.remove('hidden');
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+
+    const st = gsap.to(logoRef.current, {
+      opacity: 0.1, scale: 0.88, ease: 'none',
+      scrollTrigger: { trigger: '.act1', start: 'top top', end: 'bottom top', scrub: 1 }
+    });
+
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      st.scrollTrigger && st.scrollTrigger.kill();
+    };
+  }, []);
+
+  return (
+    <section className="act1" data-screen-label="Act 1 — Landing">
+      <div className="act1-stars-bg" aria-hidden="true"></div>
+      <div className="confetti-stars" aria-hidden="true">
+        {STARS.map((s, i) => (
+          <div key={i} className="confetti-star" style={{
+            top: s.top, left: s.left, width: s.size, height: s.size,
+            transform: `rotate(${s.rot}deg)`,
+            animation: `starIn 1s ease-out ${s.d1} forwards, starBob 4.5s ease-in-out ${s.d2} infinite`,
+          }}>
+            <img src={s.img} alt="" style={{
+              width: '100%', height: '100%',
+              objectFit: 'contain',
+              mixBlendMode: s.img.includes('Adobe') ? 'multiply' : 'normal',
+              display: 'block',
+            }}/>
+          </div>
+        ))}
+      </div>
+
+      <h1 ref={logoRef} className="act1-logo">22 seconds</h1>
+      <div className="act1-sublabel">handmade craft kits · singapore</div>
+
+      <div ref={leaderRef} className="act1-leader">
+        <div className="leader-text">your parcel · scroll to unwrap</div>
+        <div className="leader-arrow">↓</div>
+      </div>
+    </section>
+  );
+}
+
+/* ─────────────────────────── Act 2 — Parcel OPENS ─────────────────────────── */
+function Act2Parcel() {
+  useEffect(() => {
+    const tl = gsap.timeline({
+      scrollTrigger: {
+        trigger: '.act2-outer',
+        start: 'top top',
+        end: 'bottom top',
+        scrub: 1.4,
+        pin: '.act2-sticky',
+        anticipatePin: 1,
+      }
+    });
+    tl.to('.kraft-top',    { y: '-101%', ease: 'none' }, 0);
+    tl.to('.kraft-bottom', { y:  '101%', ease: 'none' }, 0);
+    tl.to('.kraft-left',   { x: '-101%', ease: 'none' }, 0);
+    tl.to('.kraft-right',  { x:  '101%', ease: 'none' }, 0);
+    tl.to('.stamp-mark', { opacity: 0, ease: 'power1.in' }, 0);
+    tl.fromTo('.act2-center-label', { opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1, ease: 'power1.out' }, 0.35);
+
+    return () => tl.scrollTrigger && tl.scrollTrigger.kill();
+  }, []);
+
+  return (
+    <section className="act2-outer" data-screen-label="Act 2 — Parcel opens">
+      <div className="act2-sticky">
+        <div className="monet-garden"></div>
+        <div className="monet-dabs"></div>
+
+        <div className="kraft-panel kraft-top"></div>
+        <div className="kraft-panel kraft-bottom"></div>
+        <div className="kraft-panel kraft-left"></div>
+        <div className="kraft-panel kraft-right"></div>
+
+        <div className="stamp-mark tl">From<br/>22 Seconds<br/>· Singapore ·</div>
+        <div className="stamp-mark br">✿ fragile ✿<br/>handmade</div>
+      </div>
+    </section>
+  );
+}
+
+/* ─────────────────────────── Act 3 — June's Box ─────────────────────────── */
+function TagMark({ kind, color }) {
+  const c = color || '#8b6f47';
+  switch (kind) {
+    case 'block':     return (<svg width="44" height="44" viewBox="0 0 54 54" fill="none"><rect x="6" y="6" width="42" height="42" rx="3" stroke={c} strokeWidth="2"/><rect x="14" y="14" width="26" height="26" rx="2" stroke={c} strokeWidth="1.5" opacity="0.45"/></svg>);
+    case 'cutter':    return (<svg width="44" height="44" viewBox="0 0 54 54" fill="none"><line x1="10" y1="38" x2="44" y2="38" stroke={c} strokeWidth="2.5" strokeLinecap="round"/><line x1="15" y1="32" x2="34" y2="32" stroke={c} strokeWidth="2" strokeLinecap="round" opacity="0.7"/><line x1="19" y1="26" x2="27" y2="26" stroke={c} strokeWidth="2" strokeLinecap="round" opacity="0.5"/><line x1="22" y1="20" x2="24" y2="20" stroke={c} strokeWidth="2" strokeLinecap="round" opacity="0.4"/></svg>);
+    case 'ink':       return (<svg width="44" height="44" viewBox="0 0 54 54" fill="none"><circle cx="27" cy="27" r="14" stroke={c} strokeWidth="2"/><circle cx="27" cy="27" r="8" fill={c} opacity="0.75"/></svg>);
+    case 'templates': return (<svg width="44" height="44" viewBox="0 0 54 54" fill="none"><rect x="7" y="13" width="30" height="34" rx="1" fill="#faf7f0" stroke={c} strokeWidth="1.5"/><rect x="12" y="9" width="30" height="34" rx="1" fill="#faf7f0" stroke={c} strokeWidth="1.5"/><rect x="17" y="5" width="30" height="34" rx="1" fill="#faf7f0" stroke={c} strokeWidth="1.5"/><line x1="22" y1="14" x2="42" y2="14" stroke={c} strokeWidth="1.3" opacity="0.55"/><line x1="22" y1="20" x2="42" y2="20" stroke={c} strokeWidth="1.3" opacity="0.55"/><line x1="22" y1="26" x2="37" y2="26" stroke={c} strokeWidth="1.3" opacity="0.55"/></svg>);
+    case 'paper':     return (<svg width="44" height="44" viewBox="0 0 54 54" fill="none"><rect x="10" y="8" width="30" height="38" rx="1" stroke={c} strokeWidth="2"/><rect x="14" y="4" width="30" height="38" rx="1" fill="#faf7f0" stroke={c} strokeWidth="2"/><line x1="19" y1="15" x2="39" y2="15" stroke={c} strokeWidth="1.3" opacity="0.6"/><line x1="19" y1="21" x2="39" y2="21" stroke={c} strokeWidth="1.3" opacity="0.6"/></svg>);
+    default:          return null;
+  }
+}
+
+const KIT_TAGS = [
+  { name: 'lino cutters',  img: 'images/tools/cutters-removebg-preview.png',        tape: 'cream' },
+  { name: 'rubber blocks', img: 'images/tools/rubber-removebg-preview.png',         tape: 'sage'  },
+  { name: 'color stamps',  img: 'images/tools/colors-removebg-preview.png',         tape: 'sky'   },
+  { name: 'tracing paper',   img: 'images/tools/tracing_paper-removebg-preview.png', tape: 'cream' },
+  { name: 'design template', img: null,                                              tape: 'sage'  },
+];
+
+const NOTECARD_ITEMS = [
+  ['Lino Cutters',      "2 triangular blades in 2 sizes — one for fine details, one for broader cuts."],
+  ['Rubber Blocks',     "6 pieces of soft 5×5cm rubber — your blank canvas, ready to carve."],
+  ['Color Stamps',      "Ink pads in red, yellow, and blue. Mix and layer for endless combinations."],
+  ['Tracing Paper',     "3 sheets of A4 tracing paper to transfer any design straight onto your block."],
+  ['Design Template',   "An A4 print of our original designs — ready to trace, cut, and make your own."],
+];
+
+function Act3Box() {
+  const cardRef = useRef(null);
+
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.fromTo('.act3-title, .act3-wavy, .act3-subtitle',
+        { opacity: 0, y: 20 },
+        { opacity: 1, y: 0, duration: 0.7, stagger: 0.12, ease: 'power2.out',
+          scrollTrigger: { trigger: '.act3', start: 'top 75%', toggleActions: 'play none none reverse' } }
+      );
+      gsap.fromTo('.kit-tag',
+        { opacity: 0, y: 26, scale: 0.9 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.55, stagger: 0.1, ease: 'back.out(1.4)',
+          scrollTrigger: { trigger: '.act3-stage', start: 'top 75%', toggleActions: 'play none none reverse' } }
+      );
+      gsap.fromTo(cardRef.current,
+        { opacity: 0, y: 30, rotate: 0.5 },
+        { opacity: 1, y: 0, rotate: 0.5, duration: 0.7, ease: 'power2.out',
+          scrollTrigger: { trigger: '.act3-stage', start: 'top 60%', toggleActions: 'play none none reverse' },
+          onComplete: () => cardRef.current && cardRef.current.classList.add('floating'),
+        }
+      );
+      gsap.fromTo('.act3-cta-wrap',
+        { opacity: 0, y: 16 },
+        { opacity: 1, y: 0, duration: 0.6, ease: 'power2.out',
+          scrollTrigger: { trigger: '.act3-cta-wrap', start: 'top 90%', toggleActions: 'play none none reverse' } }
+      );
+    });
+    return () => ctx.revert();
+  }, []);
+
+  return (
+    <section className="act3" data-screen-label="Act 3 — June's Box">
+      <div className="monet-garden"></div>
+      <div className="monet-dabs"></div>
+
+      <div className="act3-inner">
+        <header className="act3-header">
+          <h2 className="act3-title">June's Box</h2>
+          <svg className="act3-wavy" width="180" height="12" viewBox="0 0 180 12">
+            <path d="M0,6 Q22,0 45,6 Q68,12 90,6 Q112,0 135,6 Q158,12 180,6"
+                  stroke="#8b6f47" strokeWidth="2" fill="none" strokeLinecap="round"/>
+          </svg>
+          <p className="act3-subtitle">Stamp Making Kit</p>
+        </header>
+
+        <div className="act3-stage">
+          {KIT_TAGS.map((t,i)=>(
+            <div key={i} className={`kit-tag k${i} var-${t.tape}`}>
+              <div className="tag-tape"></div>
+              {t.imgs ? (
+                <div className="tag-imgs">
+                  {t.imgs.map((src,j)=>(
+                    <img key={j} src={src} alt=""/>
+                  ))}
+                </div>
+              ) : t.img ? (
+                <img className="tag-img" src={t.img} alt={t.name}/>
+              ) : null}
+              {t.name && <div className="tag-name">{t.name}</div>}
+            </div>
+          ))}
+
+          <div className="notecard" ref={cardRef}>
+            <div className="washi"></div>
+            <h3>What's in your box</h3>
+            {NOTECARD_ITEMS.map(([name, desc], i) => (
+              <div className="item-row" key={i}>
+                <span className="item-name">{name}</span>
+                <span className="item-desc">{desc}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="act3-cta-wrap">
+          <a href="#" className="cta-stamp-btn" onClick={(e)=>e.preventDefault()}>
+            I want this box →
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ─────────────────────────── Act 4 — Letter ─────────────────────────── */
+function Act4Letter() {
+  useEffect(() => {
+    const st = gsap.fromTo('.letter-content > *',
+      { opacity: 0, y: 20 },
+      {
+        opacity: 1, y: 0, duration: 0.6, stagger: 0.16, ease: 'power1.out',
+        scrollTrigger: { trigger: '.act4', start: 'top 65%', toggleActions: 'play none none reverse' }
+      }
+    );
+    return () => st && st.scrollTrigger && st.scrollTrigger.kill();
+  }, []);
+
+  return (
+    <section className="act4" data-screen-label="Act 4 — Letter">
+      <article className="letter-content">
+        <span className="hello">Hi there,</span>
+        <p>
+          22 Seconds blossomed from 2 friends faced with a recurring sense of dreadful
+          boredom every other weekend — looking for one new crafty hobby to another to
+          indulge in before another impending week of 9-5s.
+        </p>
+        <p>
+          If this already sounds familiar to you, we're here too.
+        </p>
+        <p>
+          We created 22 Seconds in hopes that the hunt for new hobbies can be shared
+          together with other like-mindeds — without having to worry about the hassle
+          of it all — such as costs, delivery and even where to begin.
+        </p>
+        <p>
+          Or, if you're just open to try something fun, something new, with someone
+          close or someone you want to get close to — we hope our little project
+          caters to you.
+        </p>
+        <p>
+          With fresh ideas every month — we would like to warmly share our debut,
+          starting with a DIY custom stamp kit this June.
+        </p>
+        <span className="signoff">
+          With love,<br/>
+          Gan &amp; Patch
+        </span>
+      </article>
+    </section>
+  );
+}
+
+/* ─────────────────────────── Footer ─────────────────────────── */
+function Footer() {
+  return (
+    <footer className="site-foot" data-screen-label="Footer">
+      <div className="foot-grid">
+        <div className="brand">
+          <p>22 Seconds</p>
+          <p>Made with love in Singapore</p>
+        </div>
+        <div className="links">
+          <p>📮 <a href="mailto:hello@22seconds.studio">hello@22seconds.studio</a></p>
+          <p>📷 <a href="https://instagram.com" target="_blank" rel="noreferrer">@22seconds.studio</a></p>
+          <p>Ships within Singapore only</p>
+        </div>
+      </div>
+      <div className="foot-bottom">© 2026 22 Seconds · All rights reserved</div>
+    </footer>
+  );
+}
+
+/* ─────────────────────────── App ─────────────────────────── */
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "fontPair": "Modern",
+  "logoFont": "Stars"
+}/*EDITMODE-END*/;
+
+const FONT_PAIRS = {
+  Editorial: { display: "'Cormorant Garamond', 'EB Garamond', serif", body: "'Cormorant Garamond', 'EB Garamond', serif", italic: 'italic' },
+  Classic:   { display: "'EB Garamond', 'Cormorant Garamond', serif", body: "'EB Garamond', 'Cormorant Garamond', serif", italic: 'italic' },
+  Modern:    { display: "'Outfit', ui-sans-serif, system-ui, sans-serif", body: "'Outfit', ui-sans-serif, system-ui, sans-serif", italic: 'normal' },
+};
+
+const LOGO_FONTS = {
+  Stars:      "'Stars Regular', cursive",
+  Lorestta:   "'Lorestta', cursive",
+  Sloop:      "'Sloop Script', cursive",
+  Valetia:    "'Valetia Script', cursive",
+  Caveat:     "'Caveat', cursive",
+  Sacramento: "'Sacramento', cursive",
+  Homemade:   "'Homemade Apple', cursive",
+  Delafield:  "'Mrs Saint Delafield', cursive",
+};
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const p = FONT_PAIRS[t.fontPair] || FONT_PAIRS.Editorial;
+    root.style.setProperty('--font-display', p.display);
+    root.style.setProperty('--font-body',    p.body);
+    root.style.setProperty('--display-italic', p.italic);
+  }, [t.fontPair]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--font-hand', LOGO_FONTS[t.logoFont] || LOGO_FONTS.Caveat);
+  }, [t.logoFont]);
+
+  useEffect(() => {
+    const id = setTimeout(() => window.ScrollTrigger && window.ScrollTrigger.refresh(), 200);
+    return () => clearTimeout(id);
+  }, []);
+
+  return (
+    <main>
+      <Act1Landing />
+      <Act2Parcel />
+      <Act3Box />
+      <Act4Letter />
+      <Footer />
+      <TweaksPanel title="Tweaks">
+        <TweakSection label="Typography" />
+        <TweakRadio
+          label="Font pair"
+          value={t.fontPair}
+          options={['Editorial','Classic','Modern']}
+          onChange={(v) => setTweak('fontPair', v)}
+        />
+        <TweakSelect
+          label="Logo font"
+          value={t.logoFont}
+          options={['Stars','Lorestta','Sloop','Valetia','Caveat','Sacramento','Homemade','Delafield']}
+          onChange={(v) => setTweak('logoFont', v)}
+        />
+      </TweaksPanel>
+    </main>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
